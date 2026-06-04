@@ -108,6 +108,20 @@ fn main() {
 3. **Signal similarity** — Use cross-correlation to find alignment between two ternary signal streams (e.g., matching a reference pattern in noisy data).
 4. **Embedded DSP** — Process ternary sensor data on microcontrollers with no FPU (`no_std`, integer-only arithmetic).
 
+## Known Limitations
+
+- **DFT is O(N²) with no FFT**: `ternary_dft()` computes the naive discrete Fourier transform, visiting every (time, frequency) pair. For signals longer than ~1024 elements, this becomes slow. A ternary-adapted FFT would bring this to O(N log N), but is not implemented.
+
+- **Fixed-point Q16 precision limits frequency resolution**: Twiddle factors (cos/sin) are stored in Q16 format (16 fractional bits ≈ 4.8 decimal digits). For signals longer than N ≈ 1000, the accumulated phase error from repeated multiplications distorts high-frequency bins. The 32-entry trig lookup table with linear interpolation is accurate to ~0.1% per entry but errors accumulate across N multiplications.
+
+- **`ternary_idft()` rounds aggressively**: The inverse DFT maps each reconstructed value to `Neg`/`Zero`/`Pos` via thresholds at ±SCALE/2. Information in the frequency domain that would produce values between −0.5 and 0.5 is lost — the IDFT cannot recover ternary values that were transformed by a lossy forward DFT (e.g., after spectral filtering).
+
+- **`autocorrelation()` uses integer arithmetic that overflows for long signals**: `R(τ) = Σ x[t]·x[t+τ]` accumulates into `i64`. For a signal of all Pos (+1) values with length N, the autocorrelation at lag 0 is N. Beyond N ≈ 9.2 × 10¹⁸, `i64` overflows. For typical use (N < 10⁶) this is fine.
+
+- **No windowing functions**: The DFT operates on raw input without Hamming, Hann, or other windowing functions. This causes spectral leakage — a pure ternary sinusoid will show energy spread across multiple frequency bins.
+
+- **`dominant_frequency()` skips DC (bin 0)**: The function always returns a non-zero bin, even if the signal's energy is concentrated at DC (all same value). This is intentional for frequency detection but can be misleading when analyzing constant or slowly-varying signals.
+
 ## Ecosystem
 
 - [`ternary-streaming`](https://github.com/user/ternary-streaming) — Streaming processing (windows, aggregators, pattern detection)
