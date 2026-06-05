@@ -2,9 +2,5 @@
 name = "ternary-signals"
 version = "0.1.0"
 edition = "2021"
-description = "Signal processing for ternary data with Fourier analysis, autocorrelation, spectral density, and frequency detection using integer/fixed-point math"
+description = "Ternary signal processing: convolution, spectral analysis, filtering"
 license = "MIT"
-authors = ["SuperInstance"]
-repository = "https://github.com/SuperInstance/ternary-signals"
-keywords = ["ternary", "signal", "fourier", "dsp", "no-std"]
-categories = ["algorithms", "embedded", "no-std"]
