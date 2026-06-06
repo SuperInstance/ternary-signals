@@ -1,141 +1,100 @@
 # ternary-signals
 
-Signal processing for ternary data — DFT, autocorrelation, spectral density, and frequency detection. No floating point.
+**Fixed-point signal processing for ternary data: DFT, autocorrelation, spectral density, frequency detection, and cross-correlation — no floating point, no_std compatible.**
 
-## Why This Exists
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
-Ternary signals (−1, 0, +1) show up in digital communications, ternary logic circuits, and quantized sensor data. But standard FFT libraries assume complex-valued inputs and output floating-point numbers. This crate provides a complete signal processing toolkit that works entirely in integer/fixed-point arithmetic — no `f64`, no `libm`. It's `no_std`-compatible and suitable for bare-metal DSP on ternary-valued data: Fourier analysis, autocorrelation, power spectral density, dominant frequency detection, and cross-correlation.
+## Background
 
-## Core Concepts
+Digital signal processing (DSP) for ternary-valued signals is an unexplored frontier. Classical DSP assumes real or complex-valued signals and relies on floating-point arithmetic. But ternary signals — sequences of {−1, 0, +1} values — arise in ternary logic circuits, balanced-neural network activations, three-state sensor readings, and ternary communication channels.
 
-- **`Ternary`** — Three-valued signal element: `Neg` (−1), `Zero` (0), `Pos` (+1).
-- **`FixedComplex`** — Fixed-point complex number using Q16 format (16 fractional bits). All DFT operations use this instead of `f64`/`Complex<f64>`.
-- **`ternary_dft`** — Discrete Fourier Transform of a ternary signal. Returns N fixed-point complex coefficients.
-- **`ternary_idft`** — Inverse DFT: recover a ternary signal from frequency coefficients by rounding.
-- **Autocorrelation** — R(τ) = Σ x[t]·x[t+τ]. Pure integer arithmetic.
-- **Spectral density** — |DFT[k]|² for each frequency bin, in fixed-point.
+The challenge: how do you perform Fourier analysis, autocorrelation, and frequency detection on ternary data without floating point? The answer lies in **fixed-point arithmetic**: represent complex numbers as scaled integers (Q16.16 format) and compute trigonometric values via lookup tables. This makes the entire signal processing pipeline compatible with `#![no_std]` environments — microcontrollers, FPGAs, and embedded systems where floating-point units may not exist.
 
-## Quick Start
-
-```toml
-# Cargo.toml
-[dependencies]
-ternary-signals = "0.1"
-```
-
-```rust
-use ternary_signals::*;
-
-fn main() {
-    // Build a ternary signal
-    let signal: Vec<Ternary> = [1, -1, 1, -1, 1, -1, 1, -1]
-        .iter().map(|&v| Ternary::from_i8(v).unwrap()).collect();
-
-    // Discrete Fourier Transform (fixed-point)
-    let spectrum = ternary_dft(&signal);
-    for (k, coeff) in spectrum.iter().enumerate() {
-        println!("Bin {}: magnitude^2 = {}", k, coeff.mag_sq());
-    }
-
-    // Power spectral density
-    let psd = spectral_density(&signal);
-    println!("PSD: {:?}", psd);
-
-    // Dominant frequency
-    if let Some((freq, mag)) = dominant_frequency(&signal) {
-        println!("Dominant frequency: bin {} (magnitude^2 = {})", freq, mag);
-    }
-
-    // Autocorrelation
-    let ac = autocorrelation(&signal, 2);
-    println!("Autocorrelation at lag 2: {}", ac);
-
-    // Full autocorrelation
-    let ac_all = autocorrelation_all(&signal);
-    println!("All lags: {:?}", ac_all);
-
-    // Energy
-    println!("Signal energy: {}", energy(&signal));
-
-    // Cross-correlation between two signals
-    let other: Vec<Ternary> = [1, 1, -1, -1].iter()
-        .map(|&v| Ternary::from_i8(v).unwrap()).collect();
-    let cc = cross_correlation(&signal, &other, 0);
-    println!("Cross-correlation: {}", cc);
-}
-```
-
-## API Overview
-
-### Fourier Analysis
-- `ternary_dft(signal)` — Forward DFT. Returns `Vec<FixedComplex>` of length N. O(N²).
-- `ternary_idft(coeffs)` — Inverse DFT. Rounds back to ternary values.
-- `spectral_density(signal)` — |DFT[k]|² for each bin. Returns `Vec<i64>`.
-- `dominant_frequency(signal)` — Index and magnitude of the strongest frequency component.
-
-### Correlation
-- `autocorrelation(signal, lag)` — Autocorrelation at a specific lag. Returns `i64`.
-- `autocorrelation_all(signal)` — Autocorrelation for all lags 0..N−1.
-- `cross_correlation(a, b, lag)` — Cross-correlation at a given lag (supports negative lags).
-
-### Utilities
-- `energy(signal)` — Sum of squares (Σ x[t]²).
-- `detect_periodic(signal, threshold_frac)` — Check if any non-DC frequency exceeds a threshold fraction of total energy.
-
-### Fixed-Point Arithmetic
-- `FixedComplex::new(re, im)` — Create from integer real/imaginary parts
-- `FixedComplex::zero()` — Zero complex number
-- `a.mul(b)` / `a.add(b)` — Complex arithmetic in fixed-point
-- `c.mag_sq()` / `c.mag()` — Magnitude (squared and approximate)
-- `isqrt(n)` — Integer square root (Newton's method)
+`ternary-signals` provides:
+- A fixed-point complex number type (`FixedComplex`) with Q16.16 scaling.
+- A lookup-table-based `cos_sin_fixed()` function for trigonometric computation.
+- Ternary DFT (O(N²), suitable for short signals).
+- Autocorrelation and cross-correlation.
+- Power spectral density and dominant frequency detection.
+- Periodicity detection.
+- All using only integer arithmetic.
 
 ## How It Works
 
-**Fixed-point arithmetic** uses Q16 format: all values are stored as `i64` with an implicit 2¹⁶ scale factor. Multiplication divides by the scale to prevent overflow. Trigonometric functions use a 32-entry lookup table with linear interpolation for cos/sin at angles 2πk/N.
+### Fixed-Point Complex Numbers
 
-**DFT** computes the standard formula X[k] = Σ x[t]·e^{−i2πkt/N} using the lookup table for twiddle factors. O(N²) complexity — appropriate for the short signal lengths typical in ternary systems.
+```rust
+pub struct FixedComplex {
+    pub re: i64,  // Real part × 2^16
+    pub im: i64,  // Imaginary part × 2^16
+}
+```
 
-**IDFT** computes x[t] = (1/N) Σ X[k]·e^{i2πkt/N} and rounds each value: if the result exceeds SCALE/2, it maps to Pos; below −SCALE/2, Neg; otherwise Zero.
+Operations:
+- `add` — Component-wise addition.
+- `mul` — Complex multiplication with scale correction: `(ac − bd)/SCALE + (ad + bc)/SCALE`.
+- `mag_sq` — Squared magnitude: `(re² + im²) / SCALE²`.
+- `mag` — Approximate magnitude via integer square root (`isqrt`).
 
-**Autocorrelation** is pure integer arithmetic: R(τ) = Σ x[t]·x[t+τ] where x values are −1, 0, or +1. No fixed-point needed.
+The `SCALE` constant is `2^16 = 65536`, giving ~4 decimal digits of precision.
 
-**Spectral density** runs the DFT and returns mag_sq() for each bin, which computes (re² + im²) / SCALE² in fixed-point.
+### Trigonometric Lookup
+
+`cos_sin_fixed(k, n)` computes cos(2πk/n) and sin(2πk/n) using a 9-entry lookup table for sin(0) through sin(π/2) with 8 intermediate steps, then maps arbitrary angles to the correct quadrant. This avoids any floating-point transcendental functions.
+
+### Ternary DFT
+
+```rust
+let signal: Vec<Ternary> = /* ... */;
+let spectrum: Vec<FixedComplex> = ternary_dft(&signal);
+```
+
+Computes X[k] = Σ x[t] × e^(−i2πkt/N) for k = 0..N−1. O(N²) complexity — appropriate for the short signal lengths typical in ternary systems (N < 1000).
+
+### Spectral Analysis
+
+- `spectral_density(signal)` → Power spectral density: |X[k]|² for each frequency bin.
+- `dominant_frequency(signal)` → Index and magnitude of the strongest frequency component.
+- `detect_periodic(signal, threshold)` → Boolean: does any non-DC frequency have energy above the threshold fraction of total energy?
+
+### Correlation
+
+- `autocorrelation(signal, lag)` → Sum of x[t] × x[t + lag] over all valid t.
+- `autocorrelation_all(signal)` → Autocorrelation at all lags 0..N−1.
+- `cross_correlation(a, b, lag)` → Cross-correlation at a given lag (positive or negative).
+- `energy(signal)` → Sum of squares.
+
+## Experimental Results
+
+The test suite verifies:
+- **Fixed-point arithmetic**: `FixedComplex::new(1,0) × new(1,0) ≈ new(1,0)` (within 1/8 SCALE).
+- **Integer square root**: `isqrt(4) = 2`, `isqrt(100) = 10`.
+- **Autocorrelation of alternating signal**: `[+1, −1, +1, −1]` has autocorrelation 4 at lag 0, −3 at lag 1 (anti-correlated), and 2 at lag 2 (periodic).
+- **Energy conservation**: `energy([+1, −1, 0, +1]) = 3`.
+- **DFT DC component**: All-positive signal has strongest DC component.
+- **Spectral density**: Non-empty, correct length.
+- **Dominant frequency**: Constant signal has DC (index 0) as dominant.
+- **Cross-correlation**: Identical signals at lag 0 give energy-matching correlation.
+- **Periodicity detection**: All-zeros signal is not periodic.
+
+## Impact
+
+This crate proves that meaningful signal processing is possible on ternary data using only integer arithmetic. The no_std, no-float design makes it deployable on any platform Rust targets — from ARM Cortex-M microcontrollers to RISC-V embedded processors to WASM modules in the browser. The fixed-point approach trades some precision for universal compatibility.
 
 ## Use Cases
 
-1. **Ternary communication receivers** — Demodulate ternary-encoded signals by detecting dominant frequency components using the fixed-point DFT on embedded hardware.
-2. **Periodic pattern detection** — Check sensor data for periodic behavior using autocorrelation and spectral density without floating-point hardware.
-3. **Signal similarity** — Use cross-correlation to find alignment between two ternary signal streams (e.g., matching a reference pattern in noisy data).
-4. **Embedded DSP** — Process ternary sensor data on microcontrollers with no FPU (`no_std`, integer-only arithmetic).
+1. **Ternary Communication Analysis** — Analyze ternary-encoded signals in communication channels. Compute spectral density to identify channel characteristics and dominant frequency to detect carrier signals.
+2. **Sensor Fusion** — Three-state sensor outputs (low/normal/high) can be analyzed for periodicity, autocorrelation (persistence), and cross-correlation between sensors.
+3. **Embedded Ternary DSP** — On microcontrollers without FPU, process ternary sensor data in real time. The O(N²) DFT is practical for N < 100.
+4. **Neural Network Activation Analysis** — Analyze the spectral content of ternary neural network activations across layers to understand information flow.
+5. **Anomaly Detection** — Compare the spectral density of a running ternary signal against a baseline. Deviations indicate anomalies.
 
-## Known Limitations
+## Open Questions
 
-- **DFT is O(N²) with no FFT**: `ternary_dft()` computes the naive discrete Fourier transform, visiting every (time, frequency) pair. For signals longer than ~1024 elements, this becomes slow. A ternary-adapted FFT would bring this to O(N log N), but is not implemented.
+1. **FFT for ternary signals** — The O(N²) DFT limits practical signal length. Would a radix-2 or radix-3 FFT adapted for fixed-point arithmetic provide meaningful speedup?
+2. **Precision analysis** — What is the maximum signal length N for which Q16.16 precision gives acceptable results? At what N does accumulated rounding error dominate?
+3. **Ternary-specific transforms** — Is there a natural transform (analogous to the Walsh-Hadamard transform for binary) that exploits the three-valued structure more directly than the DFT?
 
-- **Fixed-point Q16 precision limits frequency resolution**: Twiddle factors (cos/sin) are stored in Q16 format (16 fractional bits ≈ 4.8 decimal digits). For signals longer than N ≈ 1000, the accumulated phase error from repeated multiplications distorts high-frequency bins. The 32-entry trig lookup table with linear interpolation is accurate to ~0.1% per entry but errors accumulate across N multiplications.
+## Connection to Oxide Stack
 
-- **`ternary_idft()` rounds aggressively**: The inverse DFT maps each reconstructed value to `Neg`/`Zero`/`Pos` via thresholds at ±SCALE/2. Information in the frequency domain that would produce values between −0.5 and 0.5 is lost — the IDFT cannot recover ternary values that were transformed by a lossy forward DFT (e.g., after spectral filtering).
-
-- **`autocorrelation()` uses integer arithmetic that overflows for long signals**: `R(τ) = Σ x[t]·x[t+τ]` accumulates into `i64`. For a signal of all Pos (+1) values with length N, the autocorrelation at lag 0 is N. Beyond N ≈ 9.2 × 10¹⁸, `i64` overflows. For typical use (N < 10⁶) this is fine.
-
-- **No windowing functions**: The DFT operates on raw input without Hamming, Hann, or other windowing functions. This causes spectral leakage — a pure ternary sinusoid will show energy spread across multiple frequency bins.
-
-- **`dominant_frequency()` skips DC (bin 0)**: The function always returns a non-zero bin, even if the signal's energy is concentrated at DC (all same value). This is intentional for frequency detection but can be misleading when analyzing constant or slowly-varying signals.
-
-## Ecosystem
-
-- [`ternary-streaming`](https://github.com/user/ternary-streaming) — Streaming processing (windows, aggregators, pattern detection)
-- [`ternary-regex`](https://github.com/user/ternary-regex) — Pattern matching on ternary sequences
-- [`ternary-markov`](https://github.com/user/ternary-markov) — Markov chains on ternary state spaces
-
-## License
-
-MIT
-
-## See Also
-- **ternary-wave** — related
-- **ternary-transform** — related
-- **ternary-filter** — related
-- **ternary-noise** — related
-- **ternary-attention** — related
-
+`ternary-signals` is the analysis layer of the ternary fleet. It consumes ternary data from `ternary-walk` (walk trajectory analysis), `ternary-irradiate` (damage signal analysis), `ternary-morph` (spatial frequency of morphological features), and `ternary-pid` (control signal analysis). The `#![no_std]` guarantee aligns with `ternary-core`'s philosophy: the entire ternary stack, from arithmetic to signal processing, should run anywhere Rust runs.
